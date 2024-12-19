@@ -9,6 +9,8 @@ function App() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+    const [selectedPair, setSelectedPair] = useState<PairInfo | null>(null);
+    const [countdown, setCountdown] = useState(180); // 3 minutes in seconds
 
     // Fetch all pairs
     const fetchPairs = async () => {
@@ -21,12 +23,21 @@ function App() {
             setPairs(data);
             setLastUpdate(new Date());
             setError(null);
+            setCountdown(180); // Reset countdown
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to fetch pairs');
         } finally {
             setLoading(false);
         }
     };
+
+    // Countdown timer
+    useEffect(() => {
+        const timer = setInterval(() => {
+            setCountdown(prev => prev > 0 ? prev - 1 : 180);
+        }, 1000);
+        return () => clearInterval(timer);
+    }, []);
 
     // Set up WebSocket connection
     useEffect(() => {
@@ -60,53 +71,72 @@ function App() {
     return (
         <div className="app">
             <header className="app-header">
-                <h1>🦄 Uniswap V2 Pair Monitor</h1>
-                {lastUpdate && (
-                    <div className="last-update">
-                        Last updated: {lastUpdate.toLocaleString()}
-                    </div>
-                )}
+                <div className="container">
+                    <h1>🦄 Uniswap V2 Pair Monitor</h1>
+                    {lastUpdate && (
+                        <div className="last-update">
+                            Last updated: {lastUpdate.toLocaleString()}
+                        </div>
+                    )}
+                </div>
             </header>
 
             <main className="app-content">
-                {error && (
-                    <div className="error-message">
-                        Error: {error}
-                    </div>
-                )}
+                <div className="container">
+                    {error && (
+                        <div className="error-message">
+                            Error: {error}
+                        </div>
+                    )}
 
-                <div className="stats">
-                    <div className="stat-card">
-                        <h3>Total Pairs</h3>
-                        <div className="stat-value">{pairs.length}</div>
-                    </div>
-                    <div className="stat-card">
-                        <h3>Honeypots Detected</h3>
-                        <div className="stat-value danger">
-                            {pairs.filter(p => 
-                                p.securityChecks?.token0?.isHoneypot || 
-                                p.securityChecks?.token1?.isHoneypot
-                            ).length}
+                    <div className="stats">
+                        <div className="stat-card">
+                            <h3>Total Pairs</h3>
+                            <div className="stat-value">{pairs.length}</div>
+                        </div>
+                        <div className="stat-card">
+                            <h3>Honeypots Detected</h3>
+                            <div className="stat-value danger">
+                                {pairs.filter(p => 
+                                    p.securityChecks?.token0?.isHoneypot || 
+                                    p.securityChecks?.token1?.isHoneypot
+                                ).length}
+                            </div>
+                        </div>
+                        <div className="stat-card">
+                            <h3>High Tax Pairs</h3>
+                            <div className="stat-value warning">
+                                {pairs.filter(p => 
+                                    (p.securityChecks?.token0?.buyTax ?? 0) > 10 || 
+                                    (p.securityChecks?.token0?.sellTax ?? 0) > 10 ||
+                                    (p.securityChecks?.token1?.buyTax ?? 0) > 10 || 
+                                    (p.securityChecks?.token1?.sellTax ?? 0) > 10
+                                ).length}
+                            </div>
+                        </div>
+                        <div className="stat-card">
+                            <h3>Next Update In</h3>
+                            <div className="stat-value countdown">
+                                {Math.floor(countdown / 60)}:{(countdown % 60).toString().padStart(2, '0')}
+                            </div>
                         </div>
                     </div>
-                    <div className="stat-card">
-                        <h3>High Tax Pairs</h3>
-                        <div className="stat-value warning">
-                            {pairs.filter(p => 
-                                (p.securityChecks?.token0?.buyTax ?? 0) > 10 || 
-                                (p.securityChecks?.token0?.sellTax ?? 0) > 10 ||
-                                (p.securityChecks?.token1?.buyTax ?? 0) > 10 || 
-                                (p.securityChecks?.token1?.sellTax ?? 0) > 10
-                            ).length}
-                        </div>
+
+                    <div className="content-layout">
+                        <PairList 
+                            pairs={pairs} 
+                            loading={loading} 
+                            selectedPair={selectedPair}
+                            onSelectPair={setSelectedPair}
+                        />
                     </div>
                 </div>
-
-                <PairList pairs={pairs} loading={loading} />
             </main>
 
             <footer className="app-footer">
-                <p>Data refreshes every 3 minutes • New pairs appear in real-time</p>
+                <div className="container">
+                    <p>Data refreshes every 3 minutes • New pairs appear in real-time</p>
+                </div>
             </footer>
         </div>
     );
