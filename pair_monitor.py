@@ -10,6 +10,7 @@ from datetime import datetime
 from flask import Flask, jsonify
 from flask_socketio import SocketIO
 from flask_cors import CORS
+import logging
 
 # Initialize Flask
 app = Flask(__name__)
@@ -41,6 +42,248 @@ ERC20_ABI = '''[
     {"constant":true,"inputs":[],"name":"symbol","outputs":[{"name":"","type":"string"}],"type":"function"},
     {"constant":true,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"}
 ]'''
+
+logger = logging.getLogger(__name__)
+
+class PairMonitor:
+    def __init__(self, on_new_pair=None, on_pair_updated=None):
+        # ... existing initialization ...
+        self.on_new_pair = on_new_pair
+        self.on_pair_updated = on_pair_updated
+        logger.info("PairMonitor initialized")
+
+    def start(self):
+        try:
+            logger.info("Starting PairMonitor")
+            self._setup_web3()
+            self._setup_factory()
+            self._start_monitoring()
+        except Exception as e:
+            logger.error(f"Error starting PairMonitor: {str(e)}")
+            raise
+
+    def _setup_web3(self):
+        try:
+            logger.info(f"Connecting to Ethereum network via Infura")
+            # ... existing web3 setup ...
+            logger.info("Successfully connected to Ethereum network")
+        except Exception as e:
+            logger.error(f"Failed to connect to Ethereum network: {str(e)}")
+            raise
+
+    def _setup_factory(self):
+        try:
+            logger.info("Setting up Uniswap V2 Factory contract")
+            # ... existing factory setup ...
+            logger.info("Successfully set up Uniswap V2 Factory contract")
+        except Exception as e:
+            logger.error(f"Failed to set up factory contract: {str(e)}")
+            raise
+
+    def _start_monitoring(self):
+        try:
+            logger.info("Starting pair monitoring thread")
+            # ... existing monitoring setup ...
+        except Exception as e:
+            logger.error(f"Failed to start monitoring: {str(e)}")
+            raise
+
+    def monitor_pairs(self):
+        """Monitor for new pairs and check existing ones"""
+        while True:
+            try:
+                logger.info("ℹ️ Starting periodic rescan of existing pairs")
+                for pair_address in self.known_pairs:
+                    logger.info(f"ℹ️ Checking pair {pair_address}")
+                    await self.check_pair_security(pair_address)
+                logger.info("✅ Completed periodic rescan")
+            except Exception as e:
+                logger.error(f"❌ Error: {str(e)}")
+            await asyncio.sleep(180)  # Sleep for 3 minutes
+
+    async def check_pair_security(self, pair_address: str):
+        """Check security details for a trading pair"""
+        try:
+            # Check token0
+            token0_address = self.known_pairs[pair_address]["token0"]["address"]
+            logger.info(f"ℹ️ Checking Honeypot API for {token0_address} (attemmpt 1/3)")
+            honeypot_result = await check_honeypot(token0_address)
+            
+            if not honeypot_result:
+                logger.warning("⚠️ Invalid response format, retrying...")
+                honeypot_result = await check_honeypot(token0_address)
+            
+            logger.info("✅ Honeypot check completed successfully")
+            
+            logger.info(f"ℹ️ Checking GoPlus API for {token0_address} (attemptt 1/3)")
+            goplus_result = await check_goplus(token0_address)
+            
+            if not goplus_result:
+                logger.warning("⚠️ Invalid response format, retrying...")
+                goplus_result = await check_goplus(token0_address)
+            
+            logger.info("✅ GoPlus check completed successfully")
+
+            # Check token1
+            token1_address = self.known_pairs[pair_address]["token1"]["address"]
+            logger.info(f"ℹ️ Checking Honeypot API for {token1_address} (attemmpt 1/3)")
+            honeypot_result1 = await check_honeypot(token1_address)
+            
+            if not honeypot_result1:
+                logger.warning("⚠️ Invalid response format, retrying...")
+                honeypot_result1 = await check_honeypot(token1_address)
+            
+            logger.info("✅ Honeypot check completed successfully")
+            
+            logger.info(f"ℹ️ Checking GoPlus API for {token1_address} (attemptt 1/3)")
+            goplus_result1 = await check_goplus(token1_address)
+            
+            if not goplus_result1:
+                logger.warning("⚠️ Invalid response format, retrying...")
+                goplus_result1 = await check_goplus(token1_address)
+            
+            logger.info("✅ GoPlus check completed successfully")
+
+            # Update security info
+            self.known_pairs[pair_address]["securityChecks"] = {
+                "token0": {
+                    "honeypot": honeypot_result,
+                    "goplus": goplus_result
+                },
+                "token1": {
+                    "honeypot": honeypot_result1,
+                    "goplus": goplus_result1
+                }
+            }
+            
+            logger.info(f"✅ Updated security info for pair {token0_address}/{token1_address}")
+            
+            if self.on_pair_updated:
+                self.on_pair_updated(self.known_pairs[pair_address])
+                
+        except Exception as e:
+            logger.error(f"❌ Error checking pair security: {str(e)}")
+
+    async def handle_new_pair(self, pair_address: str):
+        """Handle new pair creation"""
+        try:
+            logger.info(f"ℹ️ Fetching token info for {pair_address}")
+            
+            # Get pair contract
+            pair_contract = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(pair_address),
+                abi=PAIR_ABI
+            )
+            
+            # Get token addresses
+            token0_address = await pair_contract.functions.token0().call()
+            token1_address = await pair_contract.functions.token1().call()
+            
+            # Get token contracts
+            token0_contract = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(token0_address),
+                abi=TOKEN_ABI
+            )
+            token1_contract = self.w3.eth.contract(
+                address=self.w3.to_checksum_address(token1_address),
+                abi=TOKEN_ABI
+            )
+            
+            # Get token details
+            try:
+                token0_name = await token0_contract.functions.name().call()
+                token0_symbol = await token0_contract.functions.symbol().call()
+                token0_decimals = await token0_contract.functions.decimals().call()
+                try:
+                    token0_supply = await token0_contract.functions.totalSupply().call()
+                except Exception as e:
+                    logger.warning(f"⚠️ Error reading total supply: {str(e)}")
+                    token0_supply = None
+            except Exception as e:
+                logger.error(f"❌ Error reading token0 info: {str(e)}")
+                token0_name = "Unknown"
+                token0_symbol = "???"
+                token0_decimals = 18
+                token0_supply = None
+                
+            try:
+                token1_name = await token1_contract.functions.name().call()
+                token1_symbol = await token1_contract.functions.symbol().call()
+                token1_decimals = await token1_contract.functions.decimals().call()
+                try:
+                    token1_supply = await token1_contract.functions.totalSupply().call()
+                except Exception as e:
+                    logger.warning(f"⚠️ Error reading total supply: {str(e)}")
+                    token1_supply = None
+            except Exception as e:
+                logger.error(f"❌ Error reading token1 info: {str(e)}")
+                token1_name = "Unknown"
+                token1_symbol = "???"
+                token1_decimals = 18
+                token1_supply = None
+
+            # Store pair info
+            pair_info = {
+                "address": pair_address,
+                "token0": {
+                    "address": token0_address,
+                    "name": token0_name,
+                    "symbol": token0_symbol,
+                    "decimals": token0_decimals,
+                    "totalSupply": token0_supply
+                },
+                "token1": {
+                    "address": token1_address,
+                    "name": token1_name,
+                    "symbol": token1_symbol,
+                    "decimals": token1_decimals,
+                    "totalSupply": token1_supply
+                },
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            self.known_pairs[pair_address] = pair_info
+            
+            # Check security
+            await self.check_pair_security(pair_address)
+            
+            if self.on_new_pair:
+                self.on_new_pair(pair_info)
+                
+            logger.info(f"✅ Successfully processed new pair {pair_address}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error handling new pair: {str(e)}")
+
+    def _check_pair(self, pair_address):
+        try:
+            logger.info(f"Checking pair {pair_address}")
+            # ... existing pair check code ...
+            if self.on_pair_updated:
+                self.on_pair_updated(pair_info)
+            logger.info(f"Successfully checked pair {pair_address}")
+        except Exception as e:
+            logger.error(f"Error checking pair {pair_address}: {str(e)}")
+
+    def _check_security(self, token_address):
+        try:
+            logger.info(f"Checking security for token {token_address}")
+            # ... existing security check code ...
+            logger.info(f"Completed security check for token {token_address}")
+            return security_info
+        except Exception as e:
+            logger.error(f"Error checking security for token {token_address}: {str(e)}")
+            return None
+
+    def _handle_new_pair(self, pair_address):
+        try:
+            logger.info(f"Processing new pair {pair_address}")
+            # ... existing new pair handling code ...
+            if self.on_new_pair:
+                self.on_new_pair(pair_info)
+            logger.info(f"Successfully processed new pair {pair_address}")
+        except Exception as e:
+            logger.error(f"Error processing new pair {pair_address}: {str(e)}")
 
 async def check_honeypot(token_address: str) -> dict:
     """Check token using Honeypot API"""

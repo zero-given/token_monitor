@@ -1,113 +1,138 @@
-import React, { useEffect, useState } from 'react';
-import { io } from 'socket.io-client';
+import React, { useState, useEffect } from 'react';
+import io from 'socket.io-client';
 import PairList from './components/PairList';
+import PairDetails from './components/PairDetails';
+import ActivityFeed from './components/ActivityFeed';
 import { PairInfo } from './types';
 import './App.css';
+
+interface LogEntry {
+    timestamp: string;
+    type: 'info' | 'success' | 'warning' | 'error';
+    message: string;
+}
 
 function App() {
     const [pairs, setPairs] = useState<PairInfo[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
+    const [selectedPair, setSelectedPair] = useState<PairInfo | null>(null);
     const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+    const [logs, setLogs] = useState<LogEntry[]>([]);
 
-    // Fetch all pairs
-    const fetchPairs = async () => {
+    useEffect(() => {
+        const socket = io('http://localhost:5000');
+
+        socket.on('connect', () => {
+            addLog('success', 'Connected to server');
+            fetchExistingPairs();
+        });
+
+        socket.on('disconnect', () => {
+            addLog('error', 'Disconnected from server');
+        });
+
+        socket.on('new_pair', (pair: PairInfo) => {
+            addLog('info', `New pair detected: ${pair.token0.symbol}/${pair.token1.symbol}`);
+            setPairs(prevPairs => [pair, ...prevPairs]);
+            setLastUpdate(new Date());
+        });
+
+        socket.on('pair_updated', (updatedPair: PairInfo) => {
+            addLog('info', `Updated pair: ${updatedPair.token0.symbol}/${updatedPair.token1.symbol}`);
+            setPairs(prevPairs => 
+                prevPairs.map(pair => 
+                    pair.address === updatedPair.address ? updatedPair : pair
+                )
+            );
+            if (selectedPair?.address === updatedPair.address) {
+                setSelectedPair(updatedPair);
+            }
+            setLastUpdate(new Date());
+        });
+
+        socket.on('error', (error: string) => {
+            addLog('error', `Server error: ${error}`);
+            setError(error);
+        });
+
+        socket.on('server_log', (logEntry: { level: string; message: string }) => {
+            const type = mapLogLevel(logEntry.level);
+            addLog(type, logEntry.message);
+        });
+
+        return () => {
+            socket.disconnect();
+        };
+    }, [selectedPair]);
+
+    const addLog = (type: 'info' | 'success' | 'warning' | 'error', message: string) => {
+        const timestamp = new Date().toLocaleTimeString();
+        setLogs(prevLogs => [...prevLogs, { timestamp, type, message }].slice(-100));
+    };
+
+    const mapLogLevel = (level: string): 'info' | 'success' | 'warning' | 'error' => {
+        switch (level.toLowerCase()) {
+            case 'success':
+                return 'success';
+            case 'warning':
+                return 'warning';
+            case 'error':
+                return 'error';
+            default:
+                return 'info';
+        }
+    };
+
+    const fetchExistingPairs = async () => {
         try {
             const response = await fetch('http://localhost:5000/pairs');
             if (!response.ok) {
-                throw new Error('Failed to fetch pairs');
+                throw new Error('Failed to fetch existing pairs');
             }
             const data = await response.json();
             setPairs(data);
             setLastUpdate(new Date());
-            setError(null);
+            addLog('success', 'Fetched existing pairs successfully');
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to fetch pairs');
+            setError(err instanceof Error ? err.message : 'An error occurred');
+            addLog('error', 'Failed to fetch existing pairs');
         } finally {
             setLoading(false);
         }
     };
 
-    // Set up WebSocket connection
-    useEffect(() => {
-        const socket = io('http://localhost:5000');
-
-        socket.on('connect', () => {
-            console.log('Connected to WebSocket server');
-            setError(null);
-        });
-
-        socket.on('connect_error', (error) => {
-            console.error('WebSocket connection error:', error);
-            setError('WebSocket connection error');
-        });
-
-        socket.on('new_pair', (newPair: PairInfo) => {
-            setPairs(prevPairs => [newPair, ...prevPairs]);
-            setLastUpdate(new Date());
-        });
-
-        // Fetch initial data and set up refresh interval
-        fetchPairs();
-        const interval = setInterval(fetchPairs, 180000); // Refresh every 3 minutes
-
-        return () => {
-            socket.disconnect();
-            clearInterval(interval);
-        };
-    }, []);
-
     return (
         <div className="app">
             <header className="app-header">
-                <h1>🦄 Uniswap V2 Pair Monitor</h1>
+                <h1>Uniswap V2 Pair Monitor</h1>
                 {lastUpdate && (
                     <div className="last-update">
-                        Last updated: {lastUpdate.toLocaleString()}
+                        Last update: {lastUpdate.toLocaleString()}
                     </div>
                 )}
             </header>
-
-            <main className="app-content">
-                {error && (
-                    <div className="error-message">
-                        Error: {error}
-                    </div>
-                )}
-
-                <div className="stats">
-                    <div className="stat-card">
-                        <h3>Total Pairs</h3>
-                        <div className="stat-value">{pairs.length}</div>
-                    </div>
-                    <div className="stat-card">
-                        <h3>Honeypots Detected</h3>
-                        <div className="stat-value danger">
-                            {pairs.filter(p => 
-                                p.securityChecks?.token0?.isHoneypot || 
-                                p.securityChecks?.token1?.isHoneypot
-                            ).length}
+            {error && <div className="error-message">{error}</div>}
+            <div className="app-content">
+                <PairList 
+                    pairs={pairs} 
+                    loading={loading} 
+                    onSelectPair={setSelectedPair}
+                    selectedPairAddress={selectedPair?.address}
+                />
+                <div className="main-content">
+                    <div className="main-content-scroll">
+                        {selectedPair ? (
+                            <PairDetails pair={selectedPair} />
+                        ) : (
+                            <div className="no-selection">
+                                Select a pair to view details
                         </div>
-                    </div>
-                    <div className="stat-card">
-                        <h3>High Tax Pairs</h3>
-                        <div className="stat-value warning">
-                            {pairs.filter(p => 
-                                (p.securityChecks?.token0?.buyTax ?? 0) > 10 || 
-                                (p.securityChecks?.token0?.sellTax ?? 0) > 10 ||
-                                (p.securityChecks?.token1?.buyTax ?? 0) > 10 || 
-                                (p.securityChecks?.token1?.sellTax ?? 0) > 10
-                            ).length}
+                        )}
+                            </div>
+                    <ActivityFeed logs={logs} />
+                            </div>
                         </div>
-                    </div>
-                </div>
-
-                <PairList pairs={pairs} loading={loading} />
-            </main>
-
-            <footer className="app-footer">
-                <p>Data refreshes every 3 minutes • New pairs appear in real-time</p>
-            </footer>
         </div>
     );
 }

@@ -4,62 +4,62 @@ import { PairInfo } from '../types';
 interface PairListProps {
     pairs: PairInfo[];
     loading: boolean;
+    onSelectPair: (pair: PairInfo) => void;
+    selectedPairAddress?: string;
 }
 
-const PairList: React.FC<PairListProps> = ({ pairs, loading }) => {
-    if (loading) {
-        return <div className="loading">Loading pairs...</div>;
-    }
+const PairList: React.FC<PairListProps> = ({ pairs, loading, onSelectPair, selectedPairAddress }) => {
+    const formatAddress = (address: string) => {
+        return `${address.slice(0, 6)}...${address.slice(-4)}`;
+    };
 
-    if (pairs.length === 0) {
-        return <div>No pairs found</div>;
+    const renderPairCard = (pair: PairInfo) => {
+        // Get the non-WETH token
+        const token = pair.token0.symbol === 'WETH' ? pair.token1 : pair.token0;
+        const tokenType = pair.token0.symbol === 'WETH' ? 'token1' : 'token0';
+        const security = pair.securityChecks?.[tokenType];
+
+        const statusIcons = security ? (
+            <div className="status-icons">
+                {!security.isHoneypot && <span className="success">✅</span>}
+                {security.isOpenSource && <span className="success">📄</span>}
+                {!security.canTakeOwnership && <span className="success">🔒</span>}
+                {Number(security.holderCount) >= 50 && <span className="success">👥</span>}
+            </div>
+        ) : null;
+
+        return (
+            <div 
+                key={pair.address}
+                className={`pair-card ${selectedPairAddress === pair.address ? 'selected' : ''}`}
+                onClick={() => onSelectPair(pair)}
+            >
+                <div className="pair-header">
+                    <div className="pair-title">{token.name} ({token.symbol})</div>
+                    <div className="pair-timestamp">{new Date(pair.timestamp).toLocaleString()}</div>
+                </div>
+                <div className="token-info">
+                    {statusIcons}
+                    <a 
+                        href={`https://etherscan.io/address/${token.address}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {formatAddress(token.address)}
+                    </a>
+                </div>
+            </div>
+        );
+    };
+
+    if (loading) {
+        return <div className="loading"></div>;
     }
 
     return (
         <div className="pair-list">
-            <h2>Recent Pairs</h2>
-            <div className="pair-grid">
-                {pairs.map((pair) => (
-                    <div key={pair.address} className="pair-card">
-                        <div className="pair-header">
-                            <h3>{pair.token0.symbol} / {pair.token1.symbol}</h3>
-                            <span className="timestamp">{new Date(pair.timestamp).toLocaleString()}</span>
-                        </div>
-                        <div className="token-info">
-                            <div className="token">
-                                <h4>{pair.token0.name}</h4>
-                                <p>Symbol: {pair.token0.symbol}</p>
-                                <p>Decimals: {pair.token0.decimals}</p>
-                                <div className={`security-status ${pair.securityChecks.token0.isHoneypot ? 'danger' : 'safe'}`}>
-                                    {pair.securityChecks.token0.isHoneypot ? '⚠️ Honeypot' : '✅ Safe'}
-                                </div>
-                                <div className="tax-info">
-                                    <p>Buy Tax: {pair.securityChecks.token0.buyTax}%</p>
-                                    <p>Sell Tax: {pair.securityChecks.token0.sellTax}%</p>
-                                </div>
-                            </div>
-                            <div className="token">
-                                <h4>{pair.token1.name}</h4>
-                                <p>Symbol: {pair.token1.symbol}</p>
-                                <p>Decimals: {pair.token1.decimals}</p>
-                                <div className={`security-status ${pair.securityChecks.token1.isHoneypot ? 'danger' : 'safe'}`}>
-                                    {pair.securityChecks.token1.isHoneypot ? '⚠️ Honeypot' : '✅ Safe'}
-                                </div>
-                                <div className="tax-info">
-                                    <p>Buy Tax: {pair.securityChecks.token1.buyTax}%</p>
-                                    <p>Sell Tax: {pair.securityChecks.token1.sellTax}%</p>
-                                </div>
-                            </div>
-                        </div>
-                        <div className="pair-footer">
-                            <a href={`https://etherscan.io/address/${pair.address}`} target="_blank" rel="noopener noreferrer">
-                                View Pair on Etherscan
-                            </a>
-                            <span className="block-number">Block: {pair.blockNumber}</span>
-                        </div>
-                    </div>
-                ))}
-            </div>
+            {pairs.map(renderPairCard)}
         </div>
     );
 };
