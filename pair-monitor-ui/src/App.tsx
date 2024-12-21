@@ -1,140 +1,151 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
+import { Container, CssBaseline, ThemeProvider, createTheme, AppBar, Toolbar, Typography, Box } from '@mui/material';
+import { Pair } from './types';
+import PairCard from './components/PairCard';
+import LogViewer from './components/LogViewer';
 import io from 'socket.io-client';
-import PairList from './components/PairList';
-import PairDetails from './components/PairDetails';
-import ActivityFeed from './components/ActivityFeed';
-import { PairInfo } from './types';
-import './App.css';
+
+const darkTheme = createTheme({
+  palette: {
+    mode: 'dark',
+    primary: {
+      main: '#1976d2',
+    },
+    secondary: {
+      main: '#dc004e',
+    },
+    background: {
+      default: '#0a1929',
+      paper: '#132f4c',
+    },
+  },
+  typography: {
+    h5: {
+      fontWeight: 600,
+    },
+    h6: {
+      fontWeight: 600,
+    },
+  },
+  components: {
+    MuiCard: {
+      styleOverrides: {
+        root: {
+          borderRadius: 12,
+          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+        },
+      },
+    },
+    MuiChip: {
+      styleOverrides: {
+        root: {
+          borderRadius: 8,
+        },
+      },
+    },
+  },
+});
 
 interface LogEntry {
-    timestamp: string;
-    type: 'info' | 'success' | 'warning' | 'error';
-    message: string;
+  level: string;
+  message: string;
+  timestamp: string;
 }
 
 function App() {
-    const [pairs, setPairs] = useState<PairInfo[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [selectedPair, setSelectedPair] = useState<PairInfo | null>(null);
-    const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-    const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [pairs, setPairs] = useState<Pair[]>([]);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
 
-    useEffect(() => {
-        const socket = io('http://localhost:5000');
+  const addLog = (level: string, message: string, timestamp: string) => {
+    setLogs(prevLogs => {
+      const newLogs = [{ level, message, timestamp }, ...prevLogs];
+      // Keep only the last 50 logs
+      return newLogs.slice(0, 50);
+    });
+  };
 
-        socket.on('connect', () => {
-            addLog('success', 'Connected to server');
-            fetchExistingPairs();
-        });
+  useEffect(() => {
+    // Initial fetch of pairs
+    fetch('http://localhost:5001/pairs')
+      .then(response => response.json())
+      .then(data => {
+        setPairs(data);
+        setLastUpdate(new Date());
+        addLog('success', 'Successfully fetched existing pairs', new Date().toISOString());
+      })
+      .catch(error => {
+        console.error('Error fetching pairs:', error);
+        addLog('error', `Failed to fetch pairs: ${error.message}`, new Date().toISOString());
+      });
 
-        socket.on('disconnect', () => {
-            addLog('error', 'Disconnected from server');
-        });
+    // Set up WebSocket connection
+    const socket = io('http://localhost:5001');
 
-        socket.on('new_pair', (pair: PairInfo) => {
-            addLog('info', `New pair detected: ${pair.token0.symbol}/${pair.token1.symbol}`);
-            setPairs(prevPairs => [pair, ...prevPairs]);
-            setLastUpdate(new Date());
-        });
+    socket.on('connect', () => {
+      addLog('success', 'Connected to server', new Date().toISOString());
+    });
 
-        socket.on('pair_updated', (updatedPair: PairInfo) => {
-            addLog('info', `Updated pair: ${updatedPair.token0.symbol}/${updatedPair.token1.symbol}`);
-            setPairs(prevPairs => 
-                prevPairs.map(pair => 
-                    pair.address === updatedPair.address ? updatedPair : pair
-                )
-            );
-            if (selectedPair?.address === updatedPair.address) {
-                setSelectedPair(updatedPair);
-            }
-            setLastUpdate(new Date());
-        });
+    socket.on('disconnect', () => {
+      addLog('error', 'Disconnected from server', new Date().toISOString());
+    });
 
-        socket.on('error', (error: string) => {
-            addLog('error', `Server error: ${error}`);
-            setError(error);
-        });
+    socket.on('new_pair', (pair: Pair) => {
+      setPairs(prevPairs => [pair, ...prevPairs]);
+      setLastUpdate(new Date());
+      addLog('info', `New pair detected: ${pair.token0_symbol}/${pair.token1_symbol}`, new Date().toISOString());
+    });
 
-        socket.on('server_log', (logEntry: { level: string; message: string }) => {
-            const type = mapLogLevel(logEntry.level);
-            addLog(type, logEntry.message);
-        });
+    socket.on('pair_updated', (updatedPair: Pair) => {
+      setPairs(prevPairs => 
+        prevPairs.map(pair => 
+          pair.pair_address === updatedPair.pair_address ? updatedPair : pair
+        )
+      );
+      setLastUpdate(new Date());
+      addLog('info', `Updated pair: ${updatedPair.token0_symbol}/${updatedPair.token1_symbol}`, new Date().toISOString());
+    });
 
-        return () => {
-            socket.disconnect();
-        };
-    }, [selectedPair]);
+    socket.on('server_log', (log: { level: string; message: string; timestamp: string }) => {
+      addLog(log.level, log.message, log.timestamp);
+    });
 
-    const addLog = (type: 'info' | 'success' | 'warning' | 'error', message: string) => {
-        const timestamp = new Date().toLocaleTimeString();
-        setLogs(prevLogs => [...prevLogs, { timestamp, type, message }].slice(-100));
+    return () => {
+      socket.disconnect();
     };
+  }, []);
 
-    const mapLogLevel = (level: string): 'info' | 'success' | 'warning' | 'error' => {
-        switch (level.toLowerCase()) {
-            case 'success':
-                return 'success';
-            case 'warning':
-                return 'warning';
-            case 'error':
-                return 'error';
-            default:
-                return 'info';
-        }
-    };
-
-    const fetchExistingPairs = async () => {
-        try {
-            const response = await fetch('http://localhost:5000/pairs');
-            if (!response.ok) {
-                throw new Error('Failed to fetch existing pairs');
-            }
-            const data = await response.json();
-            setPairs(data);
-            setLastUpdate(new Date());
-            addLog('success', 'Fetched existing pairs successfully');
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'An error occurred');
-            addLog('error', 'Failed to fetch existing pairs');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <div className="app">
-            <header className="app-header">
-                <h1>Uniswap V2 Pair Monitor</h1>
-                {lastUpdate && (
-                    <div className="last-update">
-                        Last update: {lastUpdate.toLocaleString()}
-                    </div>
-                )}
-            </header>
-            {error && <div className="error-message">{error}</div>}
-            <div className="app-content">
-                <PairList 
-                    pairs={pairs} 
-                    loading={loading} 
-                    onSelectPair={setSelectedPair}
-                    selectedPairAddress={selectedPair?.address}
-                />
-                <div className="main-content">
-                    <div className="main-content-scroll">
-                        {selectedPair ? (
-                            <PairDetails pair={selectedPair} />
-                        ) : (
-                            <div className="no-selection">
-                                Select a pair to view details
-                        </div>
-                        )}
-                            </div>
-                    <ActivityFeed logs={logs} />
-                            </div>
-                        </div>
-        </div>
-    );
+  return (
+    <ThemeProvider theme={darkTheme}>
+      <CssBaseline />
+      <Box sx={{ flexGrow: 1 }}>
+        <AppBar position="fixed" elevation={0} sx={{ backgroundColor: 'background.paper', borderBottom: 1, borderColor: 'divider' }}>
+          <Toolbar>
+            <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
+              Uniswap V2 Pair Monitor
+            </Typography>
+            {lastUpdate && (
+              <Typography variant="body2" color="text.secondary">
+                Last update: {lastUpdate.toLocaleTimeString()}
+              </Typography>
+            )}
+          </Toolbar>
+        </AppBar>
+        <Toolbar /> {/* Spacer for fixed AppBar */}
+        <Container maxWidth="lg" sx={{ py: 4 }}>
+          <LogViewer logs={logs} />
+          {pairs.map(pair => (
+            <PairCard key={pair.pair_address} pair={pair} />
+          ))}
+          {pairs.length === 0 && (
+            <Typography variant="body1" color="text.secondary" align="center" sx={{ mt: 4 }}>
+              No pairs detected yet. Waiting for new pairs...
+            </Typography>
+          )}
+        </Container>
+      </Box>
+    </ThemeProvider>
+  );
 }
 
 export default App;
