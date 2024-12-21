@@ -103,21 +103,57 @@ GOPLUS_API_KEY=your_goplus_api_key_here  # Optional
 
 ## Running the Application
 
-1. Start the pair monitor and server:
+The application consists of two main parts that need to be run in separate terminals:
+
+### Terminal 1: Backend Server
+From the root directory:
 ```bash
+# Make sure you're in the project root directory
 python server.py
 ```
+You should see initialization logs including:
+- "Initializing application..."
+- "PairMonitor initialized"
+- "Starting Flask server..."
+- "Successfully connected to Ethereum network"
 
-2. Start the React frontend (in a separate terminal):
+### Terminal 2: Frontend Development Server
+From the root directory:
 ```bash
+# Navigate to the frontend directory
 cd pair-monitor-ui
+
+# Install dependencies (if not done already)
+npm install
+
+# Start the development server
 npm start
 ```
+You should see:
+- "Starting the development server..."
+- "Compiled successfully!"
+- A browser window should automatically open
 
-3. Access the application:
-   - Frontend UI: `http://localhost:3001`
-   - API Endpoint: `http://localhost:5001/pairs`
-   - WebSocket: `ws://localhost:5001`
+### Verifying the Setup
+
+1. Backend Verification:
+   - Open `http://localhost:5001/pairs` in your browser
+   - You should see JSON data of detected pairs
+
+2. Frontend Verification:
+   - Open `http://localhost:3001` in your browser
+   - You should see the monitoring interface
+   - The connection status should show "Connected"
+
+3. Monitor Logs:
+   - Watch the Terminal 1 output for pair detection logs
+   - You should see periodic messages like "Completed periodic rescan"
+
+If any component fails to start:
+1. Ensure no other processes are using the required ports (5001, 3001)
+2. Check that you're in the correct directory for each command
+3. Verify that all prerequisites are installed
+4. Check the terminal output for any error messages
 
 ## Component Details
 
