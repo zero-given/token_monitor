@@ -1,18 +1,69 @@
 # Uniswap V2 Pair Monitor
 
-A real-time monitoring tool for new Uniswap V2 pairs with security analysis and token verification.
+A comprehensive real-time monitoring system for Uniswap V2 pairs with advanced security analysis, token verification, and rich data visualization.
+
+## System Architecture
+
+The system consists of three main components:
+
+1. **Pair Monitor (pair_monitor_enhanced.py)**
+   - Connects to Ethereum mainnet via Infura
+   - Monitors real-time Uniswap V2 pair creation events
+   - Performs deep token analysis and security checks
+   - Stores data in SQLite database
+   - Maintains session-based monitoring with automatic recovery
+
+2. **Flask Server (server.py)**
+   - Provides REST API endpoints for pair data
+   - Manages WebSocket connections for real-time updates
+   - Handles database operations and data serving
+   - Coordinates between monitor and frontend
+
+3. **React Frontend (pair-monitor-ui)**
+   - Modern Material-UI based interface
+   - Real-time pair updates via WebSocket
+   - Rich data visualization for pair analysis
+   - Interactive security analysis display
+   - Live system status monitoring
 
 ## Features
 
+### Pair Detection & Analysis
 - Real-time monitoring of new Uniswap V2 pairs
-- Security analysis for each token in the pair
-- Honeypot detection
-- Tax analysis (buy, sell, transfer)
+- Automatic pair verification and validation
+- Historical pair tracking and session management
+- Detailed token metadata collection
+
+### Security Analysis
+- Comprehensive honeypot detection
+- Buy/sell tax analysis
+- Transfer tax verification
 - Contract verification status
-- Token holder statistics
-- Real-time WebSocket updates
-- Modern React frontend with Material-UI
-- Python Flask backend with SQLite storage
+- Source code analysis
+- Top holder analysis
+- Liquidity analysis
+- Risk scoring system
+
+### Token Verification
+- Contract verification status
+- Token metadata validation
+- Supply distribution analysis
+- Owner/creator analysis
+- Security vulnerabilities check
+- GoPlus API integration for additional security data
+
+### Real-time Updates
+- WebSocket-based live updates
+- Instant pair detection notifications
+- Live security analysis results
+- System status monitoring
+- Error reporting and recovery
+
+### Data Persistence
+- Session-based monitoring
+- SQLite database storage
+- Automatic recovery from interruptions
+- Historical data retention
 
 ## Prerequisites
 
@@ -20,20 +71,21 @@ A real-time monitoring tool for new Uniswap V2 pairs with security analysis and 
 - Node.js 16+
 - npm or yarn
 - Infura API key
+- GoPlus API key (optional, for enhanced security checks)
 
 ## Installation
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/pair-monitor.git
-cd pair-monitor
+git clone https://github.com/zero-given/token_monitor.git
+cd token_monitor
 ```
 
 2. Install Python dependencies:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: .\venv\Scripts\activate
-pip install web3 python-dotenv aiohttp flask flask-socketio flask-cors
+pip install -r requirements.txt
 ```
 
 3. Install frontend dependencies:
@@ -46,13 +98,14 @@ npm install
 ```
 INFURA_API_KEY=your_infura_api_key_here
 INFURA_NETWORK=mainnet
+GOPLUS_API_KEY=your_goplus_api_key_here  # Optional
 ```
 
 ## Running the Application
 
-1. Start the Python backend:
+1. Start the pair monitor and server:
 ```bash
-python pair_monitor.py
+python server.py
 ```
 
 2. Start the React frontend (in a separate terminal):
@@ -61,14 +114,86 @@ cd pair-monitor-ui
 npm start
 ```
 
-3. Open your browser and navigate to `http://localhost:3001`
+3. Access the application:
+   - Frontend UI: `http://localhost:3001`
+   - API Endpoint: `http://localhost:5001/pairs`
+   - WebSocket: `ws://localhost:5001`
+
+## Component Details
+
+### Pair Monitor
+- Monitors Uniswap V2 factory events
+- Performs token contract analysis
+- Executes security checks
+- Manages monitoring sessions
+- Handles network interruptions
+- Stores detailed pair data
+
+### Flask Server
+- REST API endpoints
+- WebSocket server
+- Database operations
+- Session management
+- Error handling
+- Data validation
+
+### Frontend
+- Material-UI components
+- Real-time WebSocket updates
+- Rich data visualization
+- Interactive analysis display
+- System status monitoring
+- Error reporting
+
+## API Endpoints
+
+- `GET /pairs`: Retrieve all monitored pairs
+- `GET /pairs/<address>`: Get specific pair details
+- `GET /status`: System status information
+- `WS /`: WebSocket connection for real-time updates
+
+## Data Structure
+
+### Pair Information
+```json
+{
+  "address": "0x...",
+  "token0": {
+    "address": "0x...",
+    "name": "Token Name",
+    "symbol": "TKN",
+    "decimals": 18,
+    "total_supply": "1000000",
+    "security_info": {
+      "is_honeypot": false,
+      "buy_tax": "0",
+      "sell_tax": "0",
+      "goplus_details": {...}
+    }
+  },
+  "token1": {...},
+  "block_number": "12345678",
+  "transaction_hash": "0x...",
+  "created_at": "2023-...",
+  "verified": true
+}
+```
 
 ## Configuration
 
-- Backend port: 5000 (Flask server)
+- Backend port: 5001 (Flask server)
 - Frontend port: 3001 (React development server)
 - WebSocket: Enabled on backend port
 - Database: SQLite (pairs.db)
+- Session storage: ./monitoring_sessions/
+
+## Error Handling
+
+- Automatic reconnection to Ethereum network
+- Session recovery after interruptions
+- Failed transaction retry mechanism
+- Error logging and reporting
+- User notification system
 
 ## License
 
