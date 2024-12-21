@@ -11,6 +11,8 @@ from flask import Flask, jsonify
 from flask_socketio import SocketIO
 from flask_cors import CORS
 import logging
+import shutil  # For directory operations
+import requests
 
 # Initialize Flask
 app = Flask(__name__)
@@ -19,6 +21,222 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Load environment variables
 load_dotenv()
+
+# Global variables for database
+SESSIONS_ROOT = "monitoring_sessions"
+current_session = None
+db_path = None
+
+def get_session_path():
+    """Create and get path for current monitoring session"""
+    global current_session, db_path
+    
+    # Create base directory if it doesn't exist
+    if not os.path.exists(SESSIONS_ROOT):
+        os.makedirs(SESSIONS_ROOT)
+    
+    # Create dated folder
+    date_str = datetime.now().strftime("%b%d").lower()
+    date_folder = os.path.join(SESSIONS_ROOT, date_str)
+    if not os.path.exists(date_folder):
+        os.makedirs(date_folder)
+    
+    # Find next session number
+    session_num = 1
+    while os.path.exists(os.path.join(date_folder, f"session{session_num}")):
+        session_num += 1
+    
+    # Create session folder
+    current_session = os.path.join(date_folder, f"session{session_num}")
+    os.makedirs(current_session)
+    
+    # Set database path
+    db_path = os.path.join(current_session, "pairs.db")
+    
+    return db_path
+
+def init_database():
+    """Initialize SQLite database with session management"""
+    try:
+        # Get session-specific database path
+        db_file = get_session_path()
+        
+        # Create session info file
+        session_info = {
+            "start_time": datetime.now().isoformat(),
+            "database": db_file,
+            "infura_network": os.getenv('INFURA_NETWORK'),
+            "factory_address": UNISWAP_V2_FACTORY
+        }
+        
+        with open(os.path.join(current_session, "session_info.json"), "w") as f:
+            json.dump(session_info, f, indent=2)
+        
+        log_message(f"Session started in: {current_session}", "INFO")
+        
+        # Initialize database
+        conn = sqlite3.connect(db_file)
+        c = conn.cursor()
+        
+        # Create pairs table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS pairs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                block_number INTEGER,
+                transaction_hash TEXT,
+                pair_address TEXT UNIQUE,
+                pair_name TEXT,
+                pair_symbol TEXT,
+                token0_address TEXT,
+                token0_name TEXT,
+                token0_symbol TEXT,
+                token0_decimals INTEGER,
+                token0_total_supply TEXT,
+                token0_eth_balance TEXT,
+                token0_verified BOOLEAN,
+                token1_address TEXT,
+                token1_name TEXT,
+                token1_symbol TEXT,
+                token1_decimals INTEGER,
+                token1_total_supply TEXT,
+                token1_eth_balance TEXT,
+                token1_verified BOOLEAN,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
+        
+        # Create security_checks table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS security_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token_address TEXT,
+                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                
+                -- Honeypot API Data
+                hp_is_honeypot BOOLEAN,
+                hp_honeypot_reason TEXT,
+                hp_buy_tax REAL,
+                hp_sell_tax REAL,
+                hp_transfer_tax REAL,
+                hp_max_buy_amount TEXT,
+                hp_max_sell_amount TEXT,
+                hp_buy_gas REAL,
+                hp_sell_gas REAL,
+                hp_is_open_source BOOLEAN,
+                hp_is_proxy BOOLEAN,
+                hp_is_blacklisted BOOLEAN,
+                hp_is_whitelisted BOOLEAN,
+                hp_is_anti_whale BOOLEAN,
+                hp_is_trading_cooldown BOOLEAN,
+                hp_is_personal_slippage_modifiable BOOLEAN,
+                hp_has_hidden_owner BOOLEAN,
+                hp_can_take_ownership BOOLEAN,
+                hp_has_mint_function BOOLEAN,
+                hp_simulation_success BOOLEAN,
+                hp_simulation_error TEXT,
+                hp_raw_data TEXT,  -- Store complete JSON response
+                
+                -- GoPlus API Data
+                gp_buy_tax REAL,
+                gp_sell_tax REAL,
+                gp_is_mintable BOOLEAN,
+                gp_is_proxy BOOLEAN,
+                gp_is_open_source BOOLEAN,
+                gp_can_take_back_ownership BOOLEAN,
+                gp_owner_address TEXT,
+                gp_creator_address TEXT,
+                gp_holder_count INTEGER,
+                gp_total_supply TEXT,
+                gp_token_name TEXT,
+                gp_token_symbol TEXT,
+                gp_lp_holder_count INTEGER,
+                gp_lp_total_supply TEXT,
+                gp_is_in_dex BOOLEAN,
+                gp_is_anti_whale BOOLEAN,
+                gp_is_blacklisted BOOLEAN,
+                gp_is_whitelisted BOOLEAN,
+                gp_is_trading_cooldown BOOLEAN,
+                gp_trust_list TEXT,
+                gp_dex TEXT,
+                gp_potential_risks TEXT,
+                gp_raw_data TEXT,  -- Store complete JSON response
+                
+                api_errors TEXT,
+                UNIQUE(token_address, checked_at)
+            )
+        ''')
+        
+        # Create session_stats table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS session_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                pairs_found INTEGER DEFAULT 0,
+                honeypots_found INTEGER DEFAULT 0,
+                high_risk_pairs INTEGER DEFAULT 0,
+                api_errors INTEGER DEFAULT 0
+            )
+        ''')
+        
+        conn.commit()
+        log_message("✅ Database initialized successfully", "SUCCESS")
+        return True
+    except sqlite3.Error as e:
+        log_message(f"❌ Database error: {str(e)}", "ERROR")
+        return False
+    except Exception as e:
+        log_message(f"❌ Error initializing database: {str(e)}", "ERROR")
+        return False
+    finally:
+        if 'conn' in locals():
+            conn.close()
+
+def update_session_stats(stats_update):
+    """Update session statistics"""
+    global db_path
+    try:
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        
+        # Get current stats
+        c.execute('SELECT * FROM session_stats ORDER BY id DESC LIMIT 1')
+        current_stats = c.fetchone()
+        
+        if current_stats:
+            # Update existing stats
+            new_stats = {
+                'pairs_found': current_stats[2] + stats_update.get('pairs_found', 0),
+                'honeypots_found': current_stats[3] + stats_update.get('honeypots_found', 0),
+                'high_risk_pairs': current_stats[4] + stats_update.get('high_risk_pairs', 0),
+                'api_errors': current_stats[5] + stats_update.get('api_errors', 0)
+            }
+        else:
+            # Insert new stats
+            new_stats = {
+                'pairs_found': stats_update.get('pairs_found', 0),
+                'honeypots_found': stats_update.get('honeypots_found', 0),
+                'high_risk_pairs': stats_update.get('high_risk_pairs', 0),
+                'api_errors': stats_update.get('api_errors', 0)
+            }
+        
+        c.execute('''
+            INSERT INTO session_stats 
+            (pairs_found, honeypots_found, high_risk_pairs, api_errors)
+            VALUES (?, ?, ?, ?)
+        ''', (
+            new_stats['pairs_found'],
+            new_stats['honeypots_found'],
+            new_stats['high_risk_pairs'],
+            new_stats['api_errors']
+        ))
+        
+        conn.commit()
+        log_message(f"Updated session stats", "SUCCESS")
+    except Exception as e:
+        log_message(f"Error updating session stats: {str(e)}", "ERROR")
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 # Uniswap V2 Factory address
 UNISWAP_V2_FACTORY = '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f'
@@ -369,149 +587,131 @@ async def check_goplus(token_address: str) -> dict:
     return {'error': 'Max retries reached'}
 
 def print_security_info(token_address: str, honeypot_data: dict, goplus_data: dict):
-    """Print security analysis information"""
-    print("\n=== Security Analysis ===")
+    """Print complete security analysis information"""
+    print("\n" + "="*80)
+    print(f"🔍 COMPLETE SECURITY ANALYSIS FOR {token_address}")
+    print("="*80)
     
     # Honeypot Analysis
-    print("\nHoneypot Analysis:")
+    print("\n🍯 HONEYPOT API ANALYSIS:")
+    print("-"*50)
     if 'error' not in honeypot_data:
+        # Extract all relevant data
         hp_result = honeypot_data.get('honeypotResult', {})
         simulation = honeypot_data.get('simulationResult', {})
-        is_honeypot = hp_result.get('isHoneypot', 'Unknown')
+        contract = honeypot_data.get('contractCode', {})
         
-        # Color-coded honeypot status
+        # Basic Status
+        is_honeypot = hp_result.get('isHoneypot', 'Unknown')
         status = "🔴 YES" if is_honeypot else "🟢 NO" if is_honeypot is False else "⚪ Unknown"
         print(f"Is Honeypot: {status}")
         
-        if hp_result.get('isHoneypot'):
-            print(f"❗ Honeypot Reason: {hp_result.get('honeypotReason', 'Unknown')}")
+        if hp_result.get('honeypotReason'):
+            print(f"❗ Honeypot Reason: {hp_result.get('honeypotReason')}")
         
-        # Format taxes
-        buy_tax = simulation.get('buyTax', 'Unknown')
-        sell_tax = simulation.get('sellTax', 'Unknown')
-        transfer_tax = simulation.get('transferTax', 'Unknown')
+        # Simulation Results
+        print("\n📊 Simulation Results:")
+        print(f"Buy Tax: {simulation.get('buyTax', 'Unknown')}% {'🚨 HIGH' if isinstance(simulation.get('buyTax'), (int, float)) and simulation.get('buyTax') > 10 else ''}")
+        print(f"Sell Tax: {simulation.get('sellTax', 'Unknown')}% {'🚨 HIGH' if isinstance(simulation.get('sellTax'), (int, float)) and simulation.get('sellTax') > 10 else ''}")
+        print(f"Transfer Tax: {simulation.get('transferTax', 'Unknown')}% {'🚨 HIGH' if isinstance(simulation.get('transferTax'), (int, float)) and simulation.get('transferTax') > 10 else ''}")
+        print(f"Buy Gas: {simulation.get('buyGas', 'Unknown')}")
+        print(f"Sell Gas: {simulation.get('sellGas', 'Unknown')}")
+        print(f"Max Buy Amount: {simulation.get('maxBuyAmount', 'Unknown')}")
+        print(f"Max Sell Amount: {simulation.get('maxSellAmount', 'Unknown')}")
         
-        print(f"Buy Tax: {buy_tax}% {'🚨 HIGH' if isinstance(buy_tax, (int, float)) and buy_tax > 10 else ''}")
-        print(f"Sell Tax: {sell_tax}% {'🚨 HIGH' if isinstance(sell_tax, (int, float)) and sell_tax > 10 else ''}")
-        print(f"Transfer Tax: {transfer_tax}% {'🚨 HIGH' if isinstance(transfer_tax, (int, float)) and transfer_tax > 10 else ''}")
-        
-        # Add contract info
-        contract = honeypot_data.get('contractCode', {})
+        # Contract Analysis
+        print("\n📝 Contract Analysis:")
         print(f"Is Open Source: {'✅' if contract.get('isOpenSource') else '❌'}")
         print(f"Is Proxy: {'⚠️' if contract.get('isProxy') else '✅'}")
+        print(f"Is Blacklisted: {'🚨' if contract.get('isBlacklisted') else '✅'}")
+        print(f"Is Whitelisted: {'✅' if contract.get('isWhitelisted') else '❌'}")
+        print(f"Has Anti-Whale: {'⚠️' if contract.get('isAntiWhale') else '✅'}")
+        print(f"Has Trading Cooldown: {'⚠️' if contract.get('isTradingCooldown') else '✅'}")
+        print(f"Personal Slippage Modifiable: {'✅' if contract.get('isPersonalSlippageModifiable') else '⚠️'}")
+        print(f"Has Hidden Owner: {'🚨' if contract.get('hasHiddenOwner') else '✅'}")
         print(f"Can Take Ownership: {'🚨' if contract.get('canTakeOwnership') else '✅'}")
+        print(f"Has Mint Function: {'⚠️' if contract.get('hasMintFunction') else '✅'}")
+        
+        # Simulation Status
+        if not simulation.get('simulationSuccess'):
+            print(f"\n❌ Simulation Failed: {simulation.get('simulationError', 'Unknown error')}")
+            
+        # Store raw data for debugging
+        print("\n🔍 Raw Honeypot Data (for debugging):")
+        print(json.dumps(honeypot_data, indent=2))
     else:
         print(f"❌ Honeypot API Error: {honeypot_data['error']}")
     
     # GoPlus Analysis
-    print("\nGoPlus Security Analysis:")
-    if 'error' not in goplus_data:
-        if 'result' in goplus_data and token_address.lower() in goplus_data['result']:
-            token_data = goplus_data['result'][token_address.lower()]
+    print("\n🔐 GOPLUS SECURITY ANALYSIS:")
+    print("-"*50)
+    if 'error' not in goplus_data and 'result' in goplus_data:
+        token_data = goplus_data['result'].get(token_address.lower(), {})
+        if token_data:
+            # Basic Token Info
+            print("\n📊 Token Information:")
+            print(f"Name: {token_data.get('token_name', 'Unknown')}")
+            print(f"Symbol: {token_data.get('token_symbol', 'Unknown')}")
+            print(f"Total Supply: {token_data.get('total_supply', 'Unknown')}")
             
-            # Format taxes
+            # Tax Information
+            print("\n💰 Tax Information:")
             buy_tax = token_data.get('buy_tax', 'Unknown')
             sell_tax = token_data.get('sell_tax', 'Unknown')
-            
             print(f"Buy Tax: {buy_tax}% {'🚨 HIGH' if isinstance(buy_tax, (int, float)) and float(buy_tax) > 10 else ''}")
             print(f"Sell Tax: {sell_tax}% {'🚨 HIGH' if isinstance(sell_tax, (int, float)) and float(sell_tax) > 10 else ''}")
             
-            # Contract properties
+            # Contract Properties
+            print("\n📝 Contract Properties:")
             print(f"Is Mintable: {'⚠️' if token_data.get('is_mintable') == '1' else '✅'}")
             print(f"Is Open Source: {'✅' if token_data.get('is_open_source') == '1' else '❌'}")
             print(f"Is Proxy: {'⚠️' if token_data.get('is_proxy') == '1' else '✅'}")
             print(f"Can Take Back Ownership: {'🚨' if token_data.get('can_take_back_ownership') == '1' else '✅'}")
+            print(f"Is Anti-Whale: {'⚠️' if token_data.get('is_anti_whale') == '1' else '✅'}")
+            print(f"Is Blacklisted: {'🚨' if token_data.get('is_blacklisted') == '1' else '✅'}")
+            print(f"Is Whitelisted: {'✅' if token_data.get('is_whitelisted') == '1' else '❌'}")
+            print(f"Has Trading Cooldown: {'⚠️' if token_data.get('trading_cooldown') == '1' else '✅'}")
+            
+            # Holder Information
+            print("\n👥 Holder Information:")
+            holder_count = token_data.get('holder_count', 'Unknown')
+            print(f"Token Holders: {holder_count} {'⚠️ LOW' if isinstance(holder_count, (int, str)) and str(holder_count).isdigit() and int(holder_count) < 50 else ''}")
+            print(f"LP Holders: {token_data.get('lp_holder_count', 'Unknown')}")
+            print(f"LP Total Supply: {token_data.get('lp_total_supply', 'Unknown')}")
             
             # Addresses
-            print(f"\nOwner Address: {token_data.get('owner_address', 'Unknown')}")
+            print("\n📍 Important Addresses:")
+            print(f"Owner Address: {token_data.get('owner_address', 'Unknown')}")
             print(f"Creator Address: {token_data.get('creator_address', 'Unknown')}")
             
-            # Holder info
-            holder_count = token_data.get('holder_count', 'Unknown')
-            print(f"Holder Count: {holder_count} {'⚠️ LOW' if isinstance(holder_count, (int, str)) and str(holder_count).isdigit() and int(holder_count) < 50 else ''}")
+            # DEX Information
+            print("\n💱 DEX Information:")
+            print(f"Listed on DEX: {'✅' if token_data.get('is_in_dex') == '1' else '❌'}")
+            if token_data.get('dex'):
+                print(f"DEX Platforms: {token_data.get('dex')}")
             
-            # Print potential risks
+            # Trust List
+            if token_data.get('trust_list'):
+                print("\n✅ Trust List:")
+                print(token_data.get('trust_list'))
+            
+            # Potential Risks
             risks = token_data.get('other_potential_risks', '')
             if risks:
                 print("\n⚠️ Potential Risks:")
                 for risk in risks.split(','):
                     if risk.strip():
                         print(f"❗ {risk.strip()}")
+            
+            # Store raw data for debugging
+            print("\n🔍 Raw GoPlus Data (for debugging):")
+            print(json.dumps(goplus_data, indent=2))
         else:
-            print("❌ No data available from GoPlus")
+            print("❌ No data available from GoPlus for this token")
     else:
-        print(f"❌ GoPlus API Error: {goplus_data['error']}")
+        print(f"❌ GoPlus API Error: {goplus_data.get('error', 'Unknown error')}")
     
-    print("=====================")
-
-def init_database():
-    """Initialize SQLite database"""
-    try:
-        conn = sqlite3.connect('pairs.db')
-        c = conn.cursor()
-        
-        # Create pairs table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS pairs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                block_number INTEGER,
-                transaction_hash TEXT,
-                pair_address TEXT UNIQUE,
-                pair_name TEXT,
-                pair_symbol TEXT,
-                token0_address TEXT,
-                token0_name TEXT,
-                token0_symbol TEXT,
-                token0_decimals INTEGER,
-                token0_total_supply TEXT,
-                token0_eth_balance TEXT,
-                token0_verified BOOLEAN,
-                token1_address TEXT,
-                token1_name TEXT,
-                token1_symbol TEXT,
-                token1_decimals INTEGER,
-                token1_total_supply TEXT,
-                token1_eth_balance TEXT,
-                token1_verified BOOLEAN,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-        
-        # Create security_checks table
-        c.execute('''
-            CREATE TABLE IF NOT EXISTS security_checks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                token_address TEXT,
-                is_honeypot BOOLEAN,
-                honeypot_reason TEXT,
-                buy_tax REAL,
-                sell_tax REAL,
-                transfer_tax REAL,
-                is_open_source BOOLEAN,
-                is_proxy BOOLEAN,
-                can_take_ownership BOOLEAN,
-                holder_count INTEGER,
-                owner_address TEXT,
-                creator_address TEXT,
-                potential_risks TEXT,
-                api_errors TEXT,
-                checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(token_address, checked_at)
-            )
-        ''')
-        
-        conn.commit()
-        print("✅ Database initialized successfully")
-        return True
-    except sqlite3.Error as e:
-        print(f"❌ Database error: {str(e)}")
-        return False
-    except Exception as e:
-        print(f"❌ Error initializing database: {str(e)}")
-        return False
-    finally:
-        if 'conn' in locals():
-            conn.close()
+    print("="*80 + "\n")
 
 def get_timestamp():
     """Get current timestamp in readable format"""
@@ -530,7 +730,8 @@ def log_message(message: str, level: str = "INFO"):
 
 def save_pair_to_db(event, token0_info, token1_info, pair_info):
     """Save pair information to database"""
-    conn = sqlite3.connect('pairs.db')
+    global db_path
+    conn = sqlite3.connect(db_path)
     c = conn.cursor()
     
     try:
@@ -564,60 +765,175 @@ def save_pair_to_db(event, token0_info, token1_info, pair_info):
             token1_info['verified']
         ))
         conn.commit()
+        log_message(f"Saved pair data to database", "SUCCESS")
+        
+        # Update session stats
+        update_session_stats({'pairs_found': 1})
+        
     except sqlite3.IntegrityError:
-        print("Pair already exists in database")
+        log_message("Pair already exists in database", "WARNING")
+    except Exception as e:
+        log_message(f"Error saving pair data: {str(e)}", "ERROR")
     finally:
         conn.close()
 
 def save_security_check(token_address: str, honeypot_data: dict, goplus_data: dict):
-    """Save security check results to database"""
-    conn = sqlite3.connect('pairs.db')
+    """Save complete security check results to database"""
+    global db_path
+    conn = sqlite3.connect(db_path)
     c = conn.cursor()
     
-    hp_result = honeypot_data.get('honeypotResult', {})
-    simulation = honeypot_data.get('simulationResult', {})
-    contract = honeypot_data.get('contractCode', {})
-    
-    # Extract GoPlus data
-    gp_token_data = {}
-    if 'error' not in goplus_data and 'result' in goplus_data:
-        gp_token_data = goplus_data['result'].get(token_address.lower(), {})
-    
-    # Combine errors if any
-    errors = []
-    if 'error' in honeypot_data:
-        errors.append(f"Honeypot: {honeypot_data['error']}")
-    if 'error' in goplus_data:
-        errors.append(f"GoPlus: {goplus_data['error']}")
-    
     try:
-        c.execute('''
+        # Extract Honeypot data
+        hp_result = honeypot_data.get('honeypotResult', {})
+        simulation = honeypot_data.get('simulationResult', {})
+        contract = honeypot_data.get('contractCode', {})
+        
+        # Extract GoPlus data
+        gp_token_data = {}
+        if 'error' not in goplus_data and 'result' in goplus_data:
+            gp_token_data = goplus_data['result'].get(token_address.lower(), {})
+        
+        # Combine errors if any
+        errors = []
+        if 'error' in honeypot_data:
+            errors.append(f"Honeypot: {honeypot_data['error']}")
+        if 'error' in goplus_data:
+            errors.append(f"GoPlus: {goplus_data['error']}")
+        
+        # Convert raw data to JSON strings
+        hp_raw_data = json.dumps(honeypot_data)
+        gp_raw_data = json.dumps(goplus_data)
+        
+        # Convert numeric values
+        def safe_float(value):
+            try:
+                return float(value) if value is not None else None
+            except (ValueError, TypeError):
+                return None
+        
+        def safe_int(value):
+            try:
+                return int(value) if value is not None else None
+            except (ValueError, TypeError):
+                return None
+        
+        def safe_bool(value):
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() == 'true' or value == '1'
+            return bool(value) if value is not None else None
+        
+        # Create the SQL query
+        query = '''
             INSERT INTO security_checks (
-                token_address, is_honeypot, honeypot_reason,
-                buy_tax, sell_tax, transfer_tax,
-                is_open_source, is_proxy, can_take_ownership,
-                holder_count, owner_address, creator_address,
-                potential_risks, api_errors
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
+                token_address, checked_at,
+                hp_is_honeypot, hp_honeypot_reason,
+                hp_buy_tax, hp_sell_tax, hp_transfer_tax,
+                hp_max_buy_amount, hp_max_sell_amount,
+                hp_buy_gas, hp_sell_gas,
+                hp_is_open_source, hp_is_proxy, hp_is_blacklisted,
+                hp_is_whitelisted, hp_is_anti_whale, hp_is_trading_cooldown,
+                hp_is_personal_slippage_modifiable, hp_has_hidden_owner,
+                hp_can_take_ownership, hp_has_mint_function,
+                hp_simulation_success, hp_simulation_error,
+                hp_raw_data,
+                gp_buy_tax, gp_sell_tax,
+                gp_is_mintable, gp_is_proxy, gp_is_open_source,
+                gp_can_take_back_ownership,
+                gp_owner_address, gp_creator_address,
+                gp_holder_count, gp_total_supply,
+                gp_token_name, gp_token_symbol,
+                gp_lp_holder_count, gp_lp_total_supply,
+                gp_is_in_dex, gp_is_anti_whale,
+                gp_is_blacklisted, gp_is_whitelisted,
+                gp_is_trading_cooldown,
+                gp_trust_list, gp_dex,
+                gp_potential_risks, gp_raw_data,
+                api_errors
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        '''
+        
+        # Create values tuple with proper type conversion
+        values = (
             token_address,
-            hp_result.get('isHoneypot'),
-            hp_result.get('honeypotReason'),
-            simulation.get('buyTax'),
-            simulation.get('sellTax'),
-            simulation.get('transferTax'),
-            contract.get('isOpenSource'),
-            contract.get('isProxy'),
-            contract.get('canTakeOwnership'),
-            gp_token_data.get('holder_count'),
-            gp_token_data.get('owner_address'),
-            gp_token_data.get('creator_address'),
-            gp_token_data.get('other_potential_risks'),
+            datetime.now().isoformat(),
+            
+            # Honeypot API Data
+            safe_bool(hp_result.get('isHoneypot')),
+            str(hp_result.get('honeypotReason', '')),
+            safe_float(simulation.get('buyTax')),
+            safe_float(simulation.get('sellTax')),
+            safe_float(simulation.get('transferTax')),
+            str(simulation.get('maxBuyAmount', '')),
+            str(simulation.get('maxSellAmount', '')),
+            safe_float(simulation.get('buyGas')),
+            safe_float(simulation.get('sellGas')),
+            safe_bool(contract.get('isOpenSource')),
+            safe_bool(contract.get('isProxy')),
+            safe_bool(contract.get('isBlacklisted')),
+            safe_bool(contract.get('isWhitelisted')),
+            safe_bool(contract.get('isAntiWhale')),
+            safe_bool(contract.get('isTradingCooldown')),
+            safe_bool(contract.get('isPersonalSlippageModifiable')),
+            safe_bool(contract.get('hasHiddenOwner')),
+            safe_bool(contract.get('canTakeOwnership')),
+            safe_bool(contract.get('hasMintFunction')),
+            safe_bool(simulation.get('simulationSuccess')),
+            str(simulation.get('simulationError', '')),
+            hp_raw_data,
+            
+            # GoPlus API Data
+            safe_float(gp_token_data.get('buy_tax')),
+            safe_float(gp_token_data.get('sell_tax')),
+            safe_bool(gp_token_data.get('is_mintable')),
+            safe_bool(gp_token_data.get('is_proxy')),
+            safe_bool(gp_token_data.get('is_open_source')),
+            safe_bool(gp_token_data.get('can_take_back_ownership')),
+            str(gp_token_data.get('owner_address', '')),
+            str(gp_token_data.get('creator_address', '')),
+            safe_int(gp_token_data.get('holder_count')),
+            str(gp_token_data.get('total_supply', '')),
+            str(gp_token_data.get('token_name', '')),
+            str(gp_token_data.get('token_symbol', '')),
+            safe_int(gp_token_data.get('lp_holder_count')),
+            str(gp_token_data.get('lp_total_supply', '')),
+            safe_bool(gp_token_data.get('is_in_dex')),
+            safe_bool(gp_token_data.get('is_anti_whale')),
+            safe_bool(gp_token_data.get('is_blacklisted')),
+            safe_bool(gp_token_data.get('is_whitelisted')),
+            safe_bool(gp_token_data.get('trading_cooldown')),
+            str(gp_token_data.get('trust_list', '')),
+            json.dumps(gp_token_data.get('dex', [])),
+            str(gp_token_data.get('other_potential_risks', '')),
+            gp_raw_data,
+            
             ', '.join(errors) if errors else None
-        ))
+        )
+        
+        # Execute the query
+        c.execute(query, values)
         conn.commit()
+        log_message(f"Saved security check data for {token_address}", "SUCCESS")
+        
+        # Update session stats
+        update_session_stats({
+            'honeypots_found': 1 if hp_result.get('isHoneypot') else 0,
+            'high_risk_pairs': 1 if any([
+                hp_result.get('isHoneypot'),
+                contract.get('isBlacklisted'),
+                contract.get('hasHiddenOwner'),
+                contract.get('canTakeOwnership'),
+                gp_token_data.get('is_blacklisted') == '1'
+            ]) else 0,
+            'api_errors': 1 if errors else 0
+        })
+        
     except sqlite3.IntegrityError:
-        print("Security check already exists for this token")
+        log_message(f"Security check already exists for token {token_address}", "WARNING")
+    except Exception as e:
+        log_message(f"Error saving security check: {str(e)}", "ERROR")
     finally:
         conn.close()
 
@@ -747,6 +1063,10 @@ async def main_async():
     log_message(f"Network: {os.getenv('INFURA_NETWORK').upper()}")
     log_message(f"Factory: {UNISWAP_V2_FACTORY}")
     
+    # Create session directory and initialize database
+    if not os.path.exists(SESSIONS_ROOT):
+        os.makedirs(SESSIONS_ROOT)
+    
     # Initialize database
     if not init_database():
         log_message("Failed to initialize database. Exiting...", "ERROR")
@@ -816,7 +1136,7 @@ async def periodic_rescan():
             log_message("Starting periodic rescan of existing pairs", "INFO")
             
             # Get pairs from database
-            db = sqlite3.connect('pairs.db')
+            db = sqlite3.connect(db_path)
             cursor = db.cursor()
             cursor.execute('SELECT token0_address, token1_address FROM pairs ORDER BY created_at DESC LIMIT 100')
             pairs = cursor.fetchall()
@@ -913,72 +1233,78 @@ async def get_recent_pairs_async(pair_created_topic):
         log_message(f"Error during recent pairs scan: {str(e)}", "ERROR")
 
 def get_token_info(token_address):
-    """Get detailed token information"""
-    log_message(f"Fetching token info for {token_address}", "INFO")
+    """Get token information"""
     try:
-        token_contract = w3.eth.contract(address=token_address, abi=ERC20_ABI)
+        # Create contract instance
+        contract = w3.eth.contract(address=token_address, abi=ERC20_ABI)
         
-        # Basic info
+        # Get basic info
         try:
-            name = token_contract.functions.name().call()
-            symbol = token_contract.functions.symbol().call()
-            decimals = token_contract.functions.decimals().call()
-        except Exception as e:
-            log_message(f"Error reading basic token info: {str(e)}", "ERROR")
-            return {
-                'name': "Unknown",
-                'symbol': "Unknown",
-                'decimals': 18,
-                'total_supply': "Unknown",
-                'eth_balance': "0 ETH",
-                'contract_address': token_address,
-                'verified': False,
-                'error': str(e)
-            }
-        
-        # Get total supply if available
+            name = contract.functions.name().call()
+        except:
+            name = "Unknown"
+            
         try:
-            total_supply = token_contract.functions.totalSupply().call() / (10 ** decimals)
-            total_supply = f"{total_supply:,.2f}"
+            symbol = contract.functions.symbol().call()
+        except:
+            symbol = "Unknown"
+            
+        try:
+            decimals = contract.functions.decimals().call()
+        except:
+            decimals = 18
+            
+        try:
+            total_supply = contract.functions.totalSupply().call()
+            total_supply = str(total_supply / (10 ** decimals))
         except Exception as e:
-            log_message(f"Error reading total supply: {str(e)}", "WARNING")
             total_supply = "Unknown"
+            log_message(f"Error reading total supply: {str(e)}", "WARNING")
         
-        # Get ETH balance of token contract
-        try:
-            eth_balance = w3.eth.get_balance(token_address)
-            eth_balance = w3.from_wei(eth_balance, 'ether')
-        except Exception as e:
-            log_message(f"Error reading ETH balance: {str(e)}", "WARNING")
-            eth_balance = 0
+        # Get ETH balance
+        eth_balance = w3.eth.get_balance(token_address)
+        eth_balance = w3.from_wei(eth_balance, 'ether')
+        
+        # Check if contract is verified on Etherscan
+        etherscan_api_key = os.getenv('ETHERSCAN_API_KEY')
+        verified = False
+        if etherscan_api_key:
+            url = f"https://api.etherscan.io/api?module=contract&action=getabi&address={token_address}&apikey={etherscan_api_key}"
+            try:
+                response = requests.get(url)
+                data = response.json()
+                verified = data['status'] == '1' and data['message'] == 'OK'
+            except:
+                verified = False
         
         return {
+            'contract_address': token_address,
             'name': name,
             'symbol': symbol,
             'decimals': decimals,
             'total_supply': total_supply,
             'eth_balance': f"{eth_balance:.4f} ETH",
-            'contract_address': token_address,
-            'verified': True  # If we can read name/symbol, it's likely verified
+            'verified': verified
         }
+        
     except Exception as e:
-        log_message(f"Failed to get token info: {str(e)}", "ERROR")
+        log_message(f"Error getting token info: {str(e)}", "ERROR")
         return {
+            'contract_address': token_address,
             'name': "Unknown",
             'symbol': "Unknown",
             'decimals': 18,
             'total_supply': "Unknown",
-            'eth_balance': "0 ETH",
-            'contract_address': token_address,
-            'verified': False,
-            'error': str(e)
+            'eth_balance': "0.0000 ETH",
+            'verified': False
         }
 
 @app.route('/pairs', methods=['GET'])
 def get_pairs():
     """Get all pairs from database"""
+    global db_path
     try:
-        conn = sqlite3.connect('pairs.db')
+        conn = sqlite3.connect(db_path)
         c = conn.cursor()
         c.execute('''
             SELECT * FROM pairs 
@@ -1024,20 +1350,26 @@ def get_pairs():
             if security0:
                 pair_dict['securityChecks'] = {
                     'token0': {
-                        'isHoneypot': bool(security0[2]),
-                        'honeypotReason': security0[3],
-                        'buyTax': security0[4],
-                        'sellTax': security0[5],
-                        'transferTax': security0[6],
-                        'isOpenSource': bool(security0[7]),
-                        'isProxy': bool(security0[8]),
-                        'canTakeOwnership': bool(security0[9]),
-                        'holderCount': security0[10],
-                        'ownerAddress': security0[11],
-                        'creatorAddress': security0[12],
-                        'potentialRisks': security0[13].split(',') if security0[13] else [],
-                        'apiErrors': security0[14].split(',') if security0[14] else [],
-                        'checkedAt': security0[15]
+                        'isHoneypot': bool(security0[3]),
+                        'honeypotReason': security0[4],
+                        'buyTax': security0[5],
+                        'sellTax': security0[6],
+                        'transferTax': security0[7],
+                        'isOpenSource': bool(security0[11]),
+                        'isProxy': bool(security0[12]),
+                        'isBlacklisted': bool(security0[13]),
+                        'isWhitelisted': bool(security0[14]),
+                        'isAntiWhale': bool(security0[15]),
+                        'isTradingCooldown': bool(security0[16]),
+                        'hasHiddenOwner': bool(security0[18]),
+                        'canTakeOwnership': bool(security0[19]),
+                        'hasMintFunction': bool(security0[20]),
+                        'holderCount': security0[31],
+                        'ownerAddress': security0[30],
+                        'creatorAddress': security0[31],
+                        'potentialRisks': security0[44].split(',') if security0[44] else [],
+                        'apiErrors': security0[45].split(',') if security0[45] else [],
+                        'checkedAt': security0[2]
                     }
                 }
             
@@ -1045,20 +1377,26 @@ def get_pairs():
                 if 'securityChecks' not in pair_dict:
                     pair_dict['securityChecks'] = {}
                 pair_dict['securityChecks']['token1'] = {
-                    'isHoneypot': bool(security1[2]),
-                    'honeypotReason': security1[3],
-                    'buyTax': security1[4],
-                    'sellTax': security1[5],
-                    'transferTax': security1[6],
-                    'isOpenSource': bool(security1[7]),
-                    'isProxy': bool(security1[8]),
-                    'canTakeOwnership': bool(security1[9]),
-                    'holderCount': security1[10],
-                    'ownerAddress': security1[11],
-                    'creatorAddress': security1[12],
-                    'potentialRisks': security1[13].split(',') if security1[13] else [],
-                    'apiErrors': security1[14].split(',') if security1[14] else [],
-                    'checkedAt': security1[15]
+                    'isHoneypot': bool(security1[3]),
+                    'honeypotReason': security1[4],
+                    'buyTax': security1[5],
+                    'sellTax': security1[6],
+                    'transferTax': security1[7],
+                    'isOpenSource': bool(security1[11]),
+                    'isProxy': bool(security1[12]),
+                    'isBlacklisted': bool(security1[13]),
+                    'isWhitelisted': bool(security1[14]),
+                    'isAntiWhale': bool(security1[15]),
+                    'isTradingCooldown': bool(security1[16]),
+                    'hasHiddenOwner': bool(security1[18]),
+                    'canTakeOwnership': bool(security1[19]),
+                    'hasMintFunction': bool(security1[20]),
+                    'holderCount': security1[31],
+                    'ownerAddress': security1[30],
+                    'creatorAddress': security1[31],
+                    'potentialRisks': security1[44].split(',') if security1[44] else [],
+                    'apiErrors': security1[45].split(',') if security1[45] else [],
+                    'checkedAt': security1[2]
                 }
             
             pairs_list.append(pair_dict)

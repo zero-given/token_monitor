@@ -605,3 +605,264 @@ body {
   gap: 0.25rem;
   margin-right: 0.5rem;
 }
+
+.security-details {
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  margin-top: 1rem;
+}
+
+.security-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1rem;
+}
+
+.security-section {
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+}
+
+.security-section h4 {
+  margin: 0 0 1rem 0;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 0.5rem;
+}
+
+.status {
+  padding: 0.5rem;
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.status.safe {
+  background: rgba(0, 255, 0, 0.1);
+  color: #90ee90;
+}
+
+.status.warning {
+  background: rgba(255, 255, 0, 0.1);
+  color: #ffd700;
+}
+
+.status.danger {
+  background: rgba(255, 0, 0, 0.1);
+  color: #ff6b6b;
+}
+
+.reason, .simulation-error {
+  padding: 0.5rem;
+  background: rgba(255, 0, 0, 0.1);
+  border-radius: 6px;
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  color: #ff6b6b;
+}
+
+.tax-grid {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.tax {
+  padding: 0.5rem;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tax.normal {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.tax.high {
+  background: rgba(255, 0, 0, 0.1);
+  color: #ff6b6b;
+}
+
+.tax .gas {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
+.limits {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  background: rgba(255, 255, 0, 0.1);
+  border-radius: 6px;
+  font-size: 0.875rem;
+  color: #ffd700;
+}
+
+.contract-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.5rem;
+}
+
+.holder-info {
+  font-size: 0.875rem;
+}
+
+.holder-info p {
+  margin: 0.5rem 0;
+}
+
+.holder-info .address {
+  font-family: monospace;
+  word-break: break-all;
+  padding: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 4px;
+}
+
+.dex-info {
+  font-size: 0.875rem;
+}
+
+.dex-info p {
+  margin: 0.5rem 0;
+}
+
+.risks, .errors {
+  background: rgba(255, 0, 0, 0.05);
+}
+
+.risks ul, .errors ul {
+  margin: 0;
+  padding-left: 1.5rem;
+}
+
+.risks li, .errors li {
+  margin: 0.5rem 0;
+  font-size: 0.875rem;
+}
+
+.links {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.875rem;
+}
+
+.links a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+.links a:hover {
+  text-decoration: underline;
+}
+
+.timestamp {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
+
+/* Security Card Styles */
+.security-card {
+    margin-bottom: 24px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.security-section {
+    margin-bottom: 16px;
+}
+
+.security-section .ant-typography {
+    margin-bottom: 16px;
+}
+
+.security-section .ant-tag {
+    margin: 4px;
+    padding: 4px 8px;
+    font-size: 14px;
+}
+
+.security-section .ant-space {
+    width: 100%;
+}
+
+.security-section .ant-card-small {
+    border-radius: 4px;
+}
+
+.security-section .ant-tag .anticon {
+    margin-right: 4px;
+}
+
+.security-section .ant-space-vertical {
+    width: 100%;
+}
+
+.security-section .ant-typography strong {
+    color: #1f1f1f;
+}
+
+.security-section .ant-typography-secondary {
+    font-size: 14px;
+}
+
+/* Risk Level Tags */
+.tag-high-risk {
+    background-color: #ff4d4f;
+    color: white;
+}
+
+.tag-medium-risk {
+    background-color: #faad14;
+    color: white;
+}
+
+.tag-low-risk {
+    background-color: #52c41a;
+    color: white;
+}
+
+/* Copyable Addresses */
+.security-section .ant-typography-copyable {
+    margin-left: 8px;
+}
+
+/* Dividers */
+.security-section .ant-divider {
+    margin: 16px 0;
+}
+
+/* Icons */
+.security-section .anticon {
+    font-size: 16px;
+    margin-right: 4px;
+}
+
+/* Tooltips */
+.security-section .ant-tooltip {
+    max-width: 300px;
+}
+
+/* Mobile Responsiveness */
+@media (max-width: 768px) {
+    .security-section .ant-col {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .security-section .ant-tag {
+        margin-top: 4px;
+    }
+}

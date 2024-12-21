@@ -1,0 +1,95 @@
+# Pair Monitor Application - Startup Instructions
+
+## Directory Structure
+```
+C:\test\                         # Root directory
+├── pair_monitor_enhanced.py     # Backend monitoring service
+├── server.py                    # WebSocket/Flask server
+└── pair-monitor-ui\            # Frontend application directory
+    ├── package.json
+    ├── src\
+    └── ...
+```
+
+## Initial Setup
+1. Ensure you are in the correct directory:
+```bash
+cd C:\test
+```
+2. Verify the files are present:
+```bash
+dir pair_monitor_enhanced.py server.py
+```
+
+## Startup Sequence
+
+### 1. Start Backend Monitoring Service
+```bash
+# Make sure you are in C:\test directory
+python pair_monitor_enhanced.py
+```
+- This starts the pair monitoring service
+- Wait for "MONITORING FOR NEW PAIRS" message
+- This service handles pair detection and security analysis
+- If you see database errors, you may need to delete the existing database file:
+  ```bash
+  del pairs.db
+  ```
+
+### 2. Start WebSocket/Flask Server
+```bash
+# In a new terminal window, navigate to C:\test
+cd C:\test
+python server.py
+```
+- This starts the WebSocket server on port 5000
+- This server bridges the monitoring service and frontend
+- Wait for Flask server startup message
+- If you see database errors, ensure the backend service is running first
+
+### 3. Start Frontend Application
+```bash
+# In a new terminal window
+cd C:\test\pair-monitor-ui
+npm start
+```
+- This starts the React development server on port 3000
+- Wait for "Compiled successfully!" message
+- Frontend will be accessible at http://localhost:3000
+
+## Important Notes
+- Start components in order: monitoring service → WebSocket server → frontend
+- Each component needs its own terminal window
+- ALWAYS ensure you are in the correct directory before running commands
+- Ensure each service is fully started before starting the next
+- The WebSocket server is essential for real-time updates
+
+## Verification Steps
+1. Check monitoring service terminal for pair detection logs
+2. Check WebSocket server terminal for connection messages
+3. Open http://localhost:3000 in your browser
+4. You should see the UI and new pairs being detected in real-time
+
+## Troubleshooting
+- If you see "No such file or directory" errors, verify you are in C:\test directory
+- If you see database errors, try deleting pairs.db and restart all services
+- If port 3000 is in use, the frontend may ask to use a different port - this is safe to accept
+- If any component fails to start, ensure all previous processes are terminated before retrying
+- To terminate all processes: 
+  ```bash
+  taskkill /F /IM python.exe
+  taskkill /F /IM node.exe
+  ```
+
+## Common Errors and Solutions
+1. "No such file" error:
+   - Solution: Ensure you are in C:\test directory
+   - Run: `cd C:\test` before starting any service
+
+2. Database errors:
+   - Solution: Delete the database and restart services
+   - Run: `del pairs.db` from C:\test directory
+
+3. Port in use:
+   - Solution: Kill all existing processes and restart
+   - Run the termination commands above
